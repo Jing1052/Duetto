@@ -178,6 +178,7 @@ function LSApp() {
   }, [ncmSong, ncmQueue, idx]);
   aUseEffect(() => { if (playing) lsAudioEl.play().catch(function(){}); else lsAudioEl.pause(); }, [playing, idx]);
   window.__lsEv = { playMode: playMode, ncmQueue: ncmQueue, playNcmIdx: playNcmIdx, loadNcm: loadNcm };
+  window.__lsPlaying = playing;
   aUseEffect(() => {
     var onT = function(){ setCur(Math.floor(lsAudioEl.currentTime || 0)); };
     var onE = function(){
@@ -190,8 +191,31 @@ function LSApp() {
         setIdx(function(i){ return (e.playMode) === 'shuffle' ? Math.floor(Math.random()*LS_SONGS.length) : (i+1)%LS_SONGS.length; }); setCur(0);
       }
     };
+    var onP = function(){
+      // React 认为在播、audio 却停了 = 系统中断（iOS 锁屏/来电/其它 app 抢占）：本地跟随，但标记来源，广播时跳过
+      if (!window.__lsPlaying) return;
+      window.__lsSysPause = Date.now();
+      setPlaying(false);
+    };
+    var onPl = function(){ if (!window.__lsPlaying) setPlaying(true); };
+    var onErr = function(){
+      // 播放地址失效（网易云 URL 过期）：重取当前歌地址、回到原进度续播
+      try {
+        var e2 = window.__lsEv || {};
+        var s2 = (e2.ncmQueue && e2.ncmQueue.list && e2.ncmQueue.list.length) ? e2.ncmQueue.list[e2.ncmQueue.idx] : null;
+        if (!s2 || !s2.id) return;
+        var at = lsAudioEl.currentTime || 0;
+        var base2 = window.__LS_API || '/api';
+        fetch(base2 + '/ncm/song-url?id=' + s2.id).then(function(r){ return r.json(); }).then(function(d){
+          if (d && d.url) { lsAudioEl.src = d.url; try { lsAudioEl.currentTime = at; } catch(er){} if (window.__lsPlaying) lsAudioEl.play().catch(function(){}); }
+        }).catch(function(){});
+      } catch(er){}
+    };
+    var onVis = function(){ if (document.visibilityState === 'visible' && window.__lsPlaying && lsAudioEl.paused) lsAudioEl.play().catch(function(){}); };
     lsAudioEl.addEventListener('timeupdate', onT); lsAudioEl.addEventListener('ended', onE);
-    return function(){ lsAudioEl.removeEventListener('timeupdate', onT); lsAudioEl.removeEventListener('ended', onE); };
+    lsAudioEl.addEventListener('pause', onP); lsAudioEl.addEventListener('playing', onPl); lsAudioEl.addEventListener('error', onErr); lsAudioEl.addEventListener('stalled', onErr);
+    document.addEventListener('visibilitychange', onVis);
+    return function(){ lsAudioEl.removeEventListener('timeupdate', onT); lsAudioEl.removeEventListener('ended', onE); lsAudioEl.removeEventListener('pause', onP); lsAudioEl.removeEventListener('playing', onPl); lsAudioEl.removeEventListener('error', onErr); lsAudioEl.removeEventListener('stalled', onErr); document.removeEventListener('visibilitychange', onVis); };
   }, []);
   // rAF □□: □□□□□□□ audio □□□□□ cur□□□ timeupdate □□□□□□□□□□
   aUseEffect(function(){
@@ -232,16 +256,22 @@ function LSApp() {
 
   aUseEffect(() => {
     window.__lsApplyRemote = function(m){
-      window.__lsSyncApplying = true;
+      // 远端同步来的状态：记录来源，让广播 effect 据此跳过回声（不再依赖 250ms 计时窗口）
+      window.__lsLastRemote = { action: m.action, idx: (m.idx != null ? m.idx : null) };
       if (m.idx != null) setIdx(m.idx);
       if (m.action === 'play') setPlaying(true);
       else if (m.action === 'pause') setPlaying(false);
       if (m.action === 'seek' && m.val != null) { try { lsAudioEl.currentTime = m.val; } catch(e){} }
-      setTimeout(function(){ window.__lsSyncApplying = false; }, 250);
     };
   }, []);
   aUseEffect(() => {
-    if (window.__lsSyncApplying) return;
+    // 首次挂载不广播：避免把初始 pause 态推给整个房间、误停别的设备
+    if (!window.__lsBcastReady) { window.__lsBcastReady = true; return; }
+    // 刚从远端同步过来的状态，不再原样广播回去（消除双端回声）
+    var lr = window.__lsLastRemote;
+    if (lr && lr.action === (playing ? 'play' : 'pause') && (lr.idx == null || lr.idx === idx)) { window.__lsLastRemote = null; return; }
+    // 系统中断（锁屏/来电）导致的暂停不外发——只有本人/AI 主动操作才同步给对方
+    if (!playing && (Date.now() - (window.__lsSysPause || 0) < 1500)) return;
     if (window.__LS_SYNC && window.__LS_SYNC.send) window.__LS_SYNC.send({ action: playing ? 'play' : 'pause', idx: idx, time: lsAudioEl.currentTime || 0 });
   }, [playing, idx]);
   // MediaSession（灵动岛/锁屏/系统媒体控制）——显示封面·歌名·歌手，非网页链接
@@ -264,7 +294,7 @@ function LSApp() {
     try { ms.playbackState = playing ? 'playing' : 'paused'; } catch (e) {}
     var H = function (name, fn) { try { ms.setActionHandler(name, fn); } catch (e) {} };
     H('play', function () { setPlaying(true); });
-    H('pause', function () { setPlaying(false); });
+    H('pause', function () { if (document.visibilityState !== 'visible') window.__lsSysPause = Date.now(); setPlaying(false); });
     H('nexttrack', function () { if (ncmQueue) playNcmIdx(ncmQueue.idx + 1); else { setIdx(function (i) { return (i + 1) % LS_SONGS.length; }); setCur(0); } });
     H('previoustrack', function () { if (ncmQueue) playNcmIdx(ncmQueue.idx - 1); else { setIdx(function (i) { return (i - 1 + LS_SONGS.length) % LS_SONGS.length; }); setCur(0); } });
     H('seekto', function (d) { try { if (d && d.seekTime != null) { lsAudioEl.currentTime = d.seekTime; setCur(Math.floor(d.seekTime)); } } catch (e) {} });
