@@ -72,9 +72,33 @@ your own. Each chat turn Duetto sends `{message, song, user, ai}` and injects th
 
 Point your proxy at the server (default 4183), serve at your domain root, and **proxy `/ws`** for sync.
 
+## Security note
+
+Duetto is currently a single-user / trusted-room app and does **not** ship an application login layer.
+Do not expose a deployment directly to the public internet unless you put it behind your own access
+control first (for example reverse-proxy Basic Auth, Cloudflare Access, Tailscale, or a private LAN).
+Without that gate, visitors can call the same API your browser uses, including music-account actions
+and room/archive reads.
+
+## Security
+
+- **Built-in access gate.** On first open Duetto asks you to set a PIN (min 4 chars). After that,
+  every `/api/*` call and the `/ws` sync socket require the token derived from it — new devices
+  enter the PIN once. Auth state lives in `data/auth.json`; delete that file to reset the PIN.
+- Mutating NetEase endpoints (like / playlist add / delete / FM trash / logout) are POST-only.
+- `/api/models` only accepts `https://` endpoints (SSRF mitigation).
+- `/api/prompt-preview` and everything else sit behind the gate.
+- **Known upstream advisories:** `npm audit` reports 3 findings inside
+  `NeteaseCloudMusicApi → music-metadata / file-type` (2 high / 1 moderate). No fixed upstream
+  release exists yet; tracked for future upstream bumps. They sit in the music-metadata parsing
+  path of the NetEase proxy, not in Duetto's own code.
+- For internet-facing deployments, serve over **HTTPS** (also required for PWA + background audio).
+
 ## Privacy
 
-No keys, personal data, playlists, or chat logs ship with this project. `data/` is gitignored.
+No keys, personal data, playlists, or chat logs ship with this project. `data/` is gitignored. Runtime
+data stays on the deployment host under `data/`; model keys entered in the UI are stored in that
+browser's localStorage and are sent to the self-hosted backend only when making model requests.
 
 ## License
 

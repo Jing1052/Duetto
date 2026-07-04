@@ -259,7 +259,7 @@ function LSPlaylistView(props) {
   const setCardBlur = props.setCardBlur || setCardBlurL;
   const setSkin     = props.setSkin     || setSkinL;
 
-  const doLogout = () => { fetch(LSAPI + '/ncm/logout').catch(() => {}); if (window.__ncmCacheClear) window.__ncmCacheClear(); localStorage.removeItem('ls-ncm'); setNcmUser(''); };
+  const doLogout = () => { fetch(LSAPI + '/ncm/logout', { method: 'POST' }).catch(() => {}); if (window.__ncmCacheClear) window.__ncmCacheClear(); localStorage.removeItem('ls-ncm'); setNcmUser(''); };
 
   const songRow = (s, list, i) => (
     <div className="ls-songrow" key={(s.id || i) + '_' + i} onClick={() => onPlay(s, list)}>
@@ -277,7 +277,7 @@ function LSPlaylistView(props) {
       const exitSel = () => { setSelMode(false); setSelIds({}); };
       const batchDel = () => {
         const ids = selArr.map(s => s.id).join(',');
-        fetch(LSAPI + '/ncm/playlist-del?pid=' + openPl.id + '&id=' + ids).then(r => r.json()).then(d => {
+        fetch(LSAPI + '/ncm/playlist-del?pid=' + openPl.id + '&id=' + ids, { method: 'POST' }).then(r => r.json()).then(d => {
           if (d && d.ok) { setOpenTracks(ts => ts.filter(s => !selIds[s.id])); exitSel(); }
           setDelConfirm(false);
         }).catch(() => setDelConfirm(false));

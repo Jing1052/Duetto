@@ -33,7 +33,7 @@ function LSFMView({ onOpenSong, bump }) {
 
   // 不喜欢 / 换一批：登录走真实网易云，未登录为空状态
   const dislikeReal = (it) => {
-    fetch(LSAPI + '/ncm/fm-trash?id=' + encodeURIComponent(it.id)).catch(() => {});
+    fetch(LSAPI + '/ncm/fm-trash?id=' + encodeURIComponent(it.id), { method: 'POST' }).catch(() => {});
     setFm(list => (list || []).filter(x => x.id !== it.id));
     setSynced('已少推这类 · 已同步'); setTimeout(() => setSynced(''), 1800);
   };

@@ -246,7 +246,7 @@ function LSApp() {
       } else if (act.type === 'like') {
         var qv = window.__lsEv && window.__lsEv.ncmQueue;
         var cs = (qv && qv.list && qv.list[qv.idx]) || null;
-        if (cs && cs.id && /^\d+$/.test(String(cs.id))) { fetch(base + '/ncm/like?id=' + cs.id + '&like=1').catch(function(){}); if (window.__lsRoomEvent && cs.title) window.__lsRoomEvent('红心了《' + cs.title + '》'); }
+        if (cs && cs.id && /^\d+$/.test(String(cs.id))) { fetch(base + '/ncm/like?id=' + cs.id + '&like=1', { method: 'POST' }).catch(function(){}); if (window.__lsRoomEvent && cs.title) window.__lsRoomEvent('红心了《' + cs.title + '》'); }
       } else if (act.type === 'queue') {
         if (act.query) {
           fetch(base + '/ncm/search?kw=' + encodeURIComponent(act.query))
@@ -417,7 +417,7 @@ function LSApp() {
           title: song.title || '',
           artist: song.artist || '',
           album: song.album || '一起听',
-          artwork: isUrl ? [{ src: cov, sizes: '512x512', type: 'image/jpeg' }] : [],
+          artwork: isUrl ? [{ src: cov + (cov.indexOf('music.126.net') >= 0 ? ((cov.indexOf('?') >= 0 ? '&' : '?') + 'param=512y512') : ''), sizes: '512x512', type: 'image/jpeg' }] : [],
         });
       } catch (e) {}
     }

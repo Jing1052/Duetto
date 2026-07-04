@@ -2,7 +2,7 @@
   if(window.__LS_SYNC_LOADED)return;window.__LS_SYNC_LOADED=true;
   function room(){ return new URLSearchParams(location.search).get('room') || localStorage.getItem('ls.room') || 'main'; }
   var ws=null, connected=false, applying=false, aiPending={}, aiSeq=0;
-  function wsurl(){ var proto=location.protocol==='https:'?'wss:':'ws:'; var path=window.__LS_WS||'/ws'; return proto+'//'+location.host+path+'?room='+encodeURIComponent(room()); }
+  function wsurl(){ var proto=location.protocol==='https:'?'wss:':'ws:'; var path=window.__LS_WS||'/ws'; var tk=(window.__duettoToken&&window.__duettoToken())||''; return proto+'//'+location.host+path+'?room='+encodeURIComponent(room())+(tk?('&token='+encodeURIComponent(tk)):''); }
   function connect(){
     try{ ws=new WebSocket(wsurl()); }catch(e){ setTimeout(connect,3000); return; }
     ws.onopen=function(){ connected=true; };

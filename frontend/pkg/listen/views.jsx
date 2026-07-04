@@ -389,7 +389,7 @@ function LSPlayerView({ idx, setIdx, playing, setPlaying, cur, setCur, loved, se
       <div className="ls-engage">
         <button className={'eb' + (loved ? ' on' : '')} onClick={() => {
           const willLove = !loved; setLoved(l => !l);
-          if (song && song.id && /^\d+$/.test(String(song.id))) { try { fetch(base + '/ncm/like?id=' + song.id + '&like=' + (willLove ? 1 : 0)).catch(function () {}); } catch (e) {} }
+          if (song && song.id && /^\d+$/.test(String(song.id))) { try { fetch(base + '/ncm/like?id=' + song.id + '&like=' + (willLove ? 1 : 0), { method: 'POST' }).catch(function () {}); } catch (e) {} }
           if (willLove && song && song.id) { try { window.__lsActor = { who: 'user', t: Date.now() }; if (window.__lsRoomEvent && song.title) window.__lsRoomEvent('红心了《' + song.title + '》'); const st = window.__lsStore; if (st && st.library && !st.library.some(x => x.songId === song.id)) { st.library.unshift({ songId: song.id, title: song.title, artist: song.artist, cover: song.cover, pinned: false, notes: 0, last: Date.now() }); if (window.lsSaveStore) window.lsSaveStore(st); } flash('已收藏 · ' + song.title); } catch (e) {} }
         }}>
           <svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.6-10-9.2C.4 8.6 2 5 5.4 5c2 0 3.3 1.1 4.1 2.3C10.3 6.1 11.6 5 13.6 5 17 5 18.6 8.6 17 11.8 14.5 16.4 12 21 12 21z"/></svg>
@@ -972,7 +972,7 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
     if (setLoved) setLoved(willLove); else setLovedLocal(willLove);
     // 真实网易云歌：同步红心到「我喜欢的音乐」（取消也同步）
     window.__lsActor = { who: 'user', t: Date.now() };
-    if (song && song.id && /^\d+$/.test(String(song.id))) { try { fetch((window.__LS_API || '/api') + '/ncm/like?id=' + song.id + '&like=' + (willLove ? 1 : 0)).catch(function () {}); } catch (e) {} }
+    if (song && song.id && /^\d+$/.test(String(song.id))) { try { fetch((window.__LS_API || '/api') + '/ncm/like?id=' + song.id + '&like=' + (willLove ? 1 : 0), { method: 'POST' }).catch(function () {}); } catch (e) {} }
     if (willLove && window.__lsRoomEvent && song && song.title) window.__lsRoomEvent('红心了《' + song.title + '》');
     if (willLove && song && song.id) {
       if (addToLib) { try { addToLib(song); } catch (e) {} }
@@ -1318,7 +1318,7 @@ function LSSavePicker({ song, onClose }) {
   const songs = Array.isArray(song) ? song : [song];
   const ids = songs.map(function (s) { return s.id; }).join(',');
   vUseEffect(function () { fetch(base + '/ncm/playlists').then(function (r) { return r.json(); }).then(function (d) { setPls((d && d.playlists) || []); }).catch(function () { setPls([]); }); }, []);
-  const add = function (pl) { fetch(base + '/ncm/playlist-add?pid=' + pl.id + '&id=' + ids).then(function (r) { return r.json(); }).then(function (d) { setMsg((d && d.ok) ? ('已收藏到「' + pl.name + '」') : '收藏失败'); if (d && d.ok && window.__lsRoomEvent && songs[0] && songs[0].title) window.__lsRoomEvent('把《' + songs[0].title + '》' + (songs.length > 1 ? ('等 ' + songs.length + ' 首') : '') + '收进了歌单「' + pl.name + '」'); setTimeout(onClose, 1200); }).catch(function () { setMsg('收藏失败'); }); };
+  const add = function (pl) { fetch(base + '/ncm/playlist-add?pid=' + pl.id + '&id=' + ids, { method: 'POST' }).then(function (r) { return r.json(); }).then(function (d) { setMsg((d && d.ok) ? ('已收藏到「' + pl.name + '」') : '收藏失败'); if (d && d.ok && window.__lsRoomEvent && songs[0] && songs[0].title) window.__lsRoomEvent('把《' + songs[0].title + '》' + (songs.length > 1 ? ('等 ' + songs.length + ' 首') : '') + '收进了歌单「' + pl.name + '」'); setTimeout(onClose, 1200); }).catch(function () { setMsg('收藏失败'); }); };
   return (
     <div className="ls-savepick-mask" onClick={onClose}>
       <div className="ls-savepick" onClick={function (e) { e.stopPropagation(); }}>

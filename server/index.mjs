@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import ncm from 'NeteaseCloudMusicApi';
+import crypto from 'crypto';
 import { DatabaseSync } from 'node:sqlite';
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = process.env.DUETTO_DATA_DIR || path.join(rootDir, 'data');
@@ -16,7 +17,9 @@ function redactSettings(s){ const out={...s,ai:{...(s&&s.ai||{})}}; if(out.ai.ap
 function writePrivate(file, text){ const tmp=file+'.tmp'; fs.writeFileSync(tmp, text, { mode: 0o600 }); try{ fs.chmodSync(tmp, 0o600); }catch(e){} fs.renameSync(tmp, file); try{ fs.chmodSync(file, 0o600); }catch(e){} }
 // ═══ SQLite：长期档案（听歌流水/房间对话/歌曲分析/在场记录/印象）。JSON 只留瞬时状态（settings/cookie/封面缓存） ═══
 fs.mkdirSync(dataDir, { recursive: true });
-const db = new DatabaseSync(path.join(dataDir, 'listen.db'));
+const dbFile = path.join(dataDir, 'listen.db');
+const db = new DatabaseSync(dbFile);
+try { fs.chmodSync(dbFile, 0o600); } catch(e) {}
 db.exec(`
 CREATE TABLE IF NOT EXISTS plays(id TEXT, title TEXT, artist TEXT, dur INTEGER DEFAULT 0, cover TEXT DEFAULT '', bucket TEXT DEFAULT '', ts INTEGER);
 CREATE INDEX IF NOT EXISTS idx_plays_id ON plays(id);
@@ -38,11 +41,29 @@ try {
 } catch(e){ console.log('[songs backfill]', e.message); }
 const app=express();
 app.use(express.json({limit:'2mb'}));
+// ═══ 应用级门禁：首次打开设 PIN，之后所有 /api/* 与 /ws 需要 token（网易云登录只是登网易账号，这道门才是应用自己的锁） ═══
+const authFile = path.join(dataDir, 'auth.json');
+function readAuth(){ try { return JSON.parse(fs.readFileSync(authFile, 'utf8')); } catch(e){ return null; } }
+function writeAuth(a){ fs.mkdirSync(dataDir, { recursive: true }); const tmp = authFile + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(a)); fs.renameSync(tmp, authFile); }
+function hashPin(pin, salt){ return crypto.scryptSync(String(pin), salt, 32).toString('hex'); }
+function makeToken(secret){ return crypto.createHmac('sha256', String(secret)).update('duetto-access').digest('hex'); }
+function reqToken(req){ const h = String(req.headers['authorization'] || ''); if (h.startsWith('Bearer ')) return h.slice(7); try { return String((req.query && req.query.token) || ''); } catch(e){ return ''; } }
+app.use('/api', (req, res, next) => {
+  if (req.path === '/auth/status' || req.path === '/auth/setup' || req.path === '/auth/login') return next();
+  const a = readAuth();
+  if (!a) return next(); // 尚未设 PIN：放行（前端首屏会强制引导设置）
+  const t = reqToken(req);
+  if (t && t === makeToken(a.secret)) return next();
+  res.status(401).json({ ok: false, error: 'unauthorized' });
+});
+app.get('/api/auth/status', (_q, r) => r.json({ ok: true, configured: !!readAuth() }));
+app.post('/api/auth/setup', (q, r) => { if (readAuth()) return r.status(409).json({ ok: false, error: 'already configured' }); const pin = String((q.body || {}).pin || ''); if (pin.length < 4) return r.status(400).json({ ok: false, error: 'PIN 至少 4 位' }); const salt = crypto.randomBytes(16).toString('hex'); const secret = crypto.randomBytes(32).toString('hex'); writeAuth({ salt, hash: hashPin(pin, salt), secret, created: Date.now() }); r.json({ ok: true, token: makeToken(secret) }); });
+app.post('/api/auth/login', (q, r) => { const a = readAuth(); if (!a) return r.status(400).json({ ok: false, error: 'not configured' }); const pin = String((q.body || {}).pin || ''); if (hashPin(pin, a.salt) !== a.hash) return r.status(401).json({ ok: false, error: 'PIN 不对' }); r.json({ ok: true, token: makeToken(a.secret) }); });
 app.get('/api/health',(_q,r)=>r.json({ok:true,mode:'self-host',version:'0.2.0'}));
 app.get('/api/config',(_q,r)=>{ const s=getSettings(); r.json({ok:true,config:{companion:{name:s.ai_name,has_key:Boolean(s.ai.api_key),model:s.ai.model},user:{display_name:s.user_name},room:{title:s.room_name,subtitle:s.room_sub}}}); });
 app.get('/api/settings',(_q,r)=>{ r.json({ok:true,settings:redactSettings(getSettings())}); });
-app.post('/api/settings',(q,r)=>{ try{ const cur=getSettings(); const b=q.body||{}; const bai={...(b.ai||{})}; if(!bai.api_key||/^\*/.test(bai.api_key))delete bai.api_key; if(!bai.a_key||/^\*/.test(bai.a_key))delete bai.a_key; delete bai.has_key; delete bai.key_hint; delete bai.has_a_key; delete bai.a_key_hint; const next={...cur,...b,ai:{...cur.ai,...bai}}; fs.mkdirSync(dataDir,{recursive:true}); writePrivate(settingsFile,JSON.stringify(next,null,2)); r.json({ok:true,settings:redactSettings(next)}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
-app.post('/api/models',async(q,r)=>{ try{ const {base_url,api_key}=q.body||{}; if(!base_url)return r.status(400).json({ok:false,error:'base_url required'}); const base=String(base_url).replace(/\/+$/,''); const rr=await fetchT(base+'/models',{headers:api_key?{Authorization:'Bearer '+api_key}:{}},15000); if(!rr.ok){const t=await rr.text().catch(()=>'');return r.status(502).json({ok:false,error:'models '+rr.status+': '+t.slice(0,200)});} const d=await rr.json(); const arr=Array.isArray(d)?d:(d.data||d.models||[]); r.json({ok:true,models:arr.map(m=>typeof m==='string'?m:(m.id||m.name||m.model||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b,'zh-Hans-CN'))}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
+app.post('/api/settings',(q,r)=>{ try{ const cur=getSettings(); const b=q.body||{}; const bai={...(b.ai||{})}; const hasOwn=(o,k)=>Object.prototype.hasOwnProperty.call(o,k); const apiKeyProvided=!!(bai.api_key&&!/^\*/.test(String(bai.api_key))); const aKeyProvided=!!(bai.a_key&&!/^\*/.test(String(bai.a_key))); const baseChanging=hasOwn(bai,'base_url')&&String(bai.base_url||'')!==String((cur.ai&&cur.ai.base_url)||''); const aBaseChanging=hasOwn(bai,'a_base')&&String(bai.a_base||'')!==String((cur.ai&&cur.ai.a_base)||''); if(!apiKeyProvided)delete bai.api_key; if(!aKeyProvided)delete bai.a_key; delete bai.has_key; delete bai.key_hint; delete bai.has_a_key; delete bai.a_key_hint; const next={...cur,...b,ai:{...cur.ai,...bai}}; if(baseChanging&&!apiKeyProvided)next.ai.api_key=''; if(aBaseChanging&&!aKeyProvided)next.ai.a_key=''; fs.mkdirSync(dataDir,{recursive:true}); writePrivate(settingsFile,JSON.stringify(next,null,2)); r.json({ok:true,settings:redactSettings(next)}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
+app.post('/api/models',async(q,r)=>{ try{ const {base_url,api_key}=q.body||{}; if(!base_url)return r.status(400).json({ok:false,error:'base_url required'}); const base=String(base_url).replace(/\/+$/,''); if(!/^https:\/\//.test(base)) return r.status(400).json({ok:false,error:'base_url must be https'}); const rr=await fetchT(base+'/models',{headers:api_key?{Authorization:'Bearer '+api_key}:{}},15000); if(!rr.ok){const t=await rr.text().catch(()=>'');return r.status(502).json({ok:false,error:'models '+rr.status+': '+t.slice(0,200)});} const d=await rr.json(); const arr=Array.isArray(d)?d:(d.data||d.models||[]); r.json({ok:true,models:arr.map(m=>typeof m==='string'?m:(m.id||m.name||m.model||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b,'zh-Hans-CN'))}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
 function mergeAi(base,over){ const out={...base}; if(over&&typeof over==='object'){ for(const k of ['model','persona','style','ai_name','user_name','time_aware','reply_mode','context_url','a_model']){ const v=over[k]; if(v!==undefined&&v!==null&&v!=='')out[k]=v; } if(over.base_url&&over.api_key){ out.base_url=over.base_url; out.api_key=over.api_key; } if(over.a_base&&over.a_key){ out.a_base=over.a_base; out.a_key=over.a_key; } } return out; }
 function timeBucket(h){ if(h<5)return '深夜'; if(h<9)return '清晨'; if(h<12)return '上午'; if(h<14)return '午间'; if(h<18)return '下午'; if(h<23)return '晚上'; return '深夜'; }
 // 外部记忆接口（可选）：settings.ai.context_url 指向部署者自己的记忆/召回服务，
@@ -248,7 +269,7 @@ async function ncmProfile(){ if(!ncmCookie) return null; try{ const st=await ncm
 app.get('/api/ncm/qr', async (_q,r)=>{ try{ const k=await ncm.login_qr_key({}); const key=k.body.data.unikey; const c=await ncm.login_qr_create({ key, qrimg:true }); r.json({ ok:true, key, qrimg:c.body.data.qrimg }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/check', async (q,r)=>{ try{ const key=q.query.key; const c=await ncm.login_qr_check({ key }); const code=c.body.code; if(code===803){ saveNcmCookie(c.body.cookie); const p=await ncmProfile(); r.json({ ok:true, code, logged:true, nickname:p&&p.nickname, avatar:p&&p.avatarUrl, uid:p&&p.userId }); } else { r.json({ ok:true, code, message:c.body.message||'' }); } }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/status', async (_q,r)=>{ const p=await ncmProfile(); if(p) r.json({ ok:true, logged:true, nickname:p.nickname, avatar:p.avatarUrl, uid:p.userId }); else r.json({ ok:true, logged:false }); });
-app.get('/api/ncm/logout', async (_q,r)=>{ saveNcmCookie(''); try{ fs.unlinkSync(ncmCookieFile); }catch(e){} r.json({ ok:true }); });
+app.post('/api/ncm/logout', async (_q,r)=>{ saveNcmCookie(''); try{ fs.unlinkSync(ncmCookieFile); }catch(e){} r.json({ ok:true }); });
 // —— NetEase Cloud Music: real data (uses logged-in cookie) ——
 function ncmMapSong(s){ return { id:s.id, title:s.name, artist:(s.ar||s.artists||[]).map(a=>a.name).join(' / '), album:(s.al||s.album||{}).name||'', cover:(s.al||s.album||{}).picUrl||'', dur:Math.round((s.dt||s.duration||0)/1000) }; }
 app.get('/api/ncm/playlists', async (_q,r)=>{ try{ const p=await ncmProfile(); if(!p) return r.json({ok:true,logged:false,playlists:[]}); const pl=await ncm.user_playlist({ uid:p.userId, limit:100, cookie:ncmCookie }); const playlists=((pl.body&&pl.body.playlist)||[]).map(x=>({ id:x.id, name:x.name, count:x.trackCount, cover:x.coverImgUrl, mine:x.creator&&x.creator.userId===p.userId })); r.json({ ok:true, logged:true, playlists }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
@@ -257,16 +278,16 @@ app.get('/api/ncm/song-url', async (q,r)=>{ try{ const su=await ncm.song_url_v1(
 app.get('/api/ncm/recommend', async (_q,r)=>{ try{ const rc=await ncm.recommend_songs({ cookie:ncmCookie }); const songs=((rc.body&&rc.body.data&&rc.body.data.dailySongs)||[]).map(s=>({ ...ncmMapSong(s), reason:(s.reason||'每日推荐') })); r.json({ ok:true, songs }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/search', async (q,r)=>{ try{ const sr=await ncm.cloudsearch({ keywords:q.query.kw||'', limit:30, cookie:ncmCookie }); const songs=((sr.body&&sr.body.result&&sr.body.result.songs)||[]).map(ncmMapSong); r.json({ ok:true, songs }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/personal-fm', async (_q,r)=>{ try{ const fm=await ncm.personal_fm({ cookie:ncmCookie }); const songs=((fm.body&&fm.body.data)||[]).map(ncmMapSong); r.json({ ok:true, songs }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
-app.get('/api/ncm/fm-trash', async (q,r)=>{ try{ await ncm.fm_trash({ id:q.query.id, cookie:ncmCookie }); r.json({ ok:true }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
+app.post('/api/ncm/fm-trash', async (q,r)=>{ try{ await ncm.fm_trash({ id:q.query.id, cookie:ncmCookie }); r.json({ ok:true }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/search-artist', async (q,r)=>{ try{ const sr=await ncm.cloudsearch({ keywords:q.query.kw||'', type:100, limit:12, cookie:ncmCookie }); const artists=((sr.body&&sr.body.result&&sr.body.result.artists)||[]).map(a=>({ id:a.id, name:a.name, cover:(a.picUrl||a.img1v1Url||'').replace(/^http:/,'https:'), alias:(a.alias||a.alia||[]) })); r.json({ ok:true, artists }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/artist-songs', async (q,r)=>{ try{ const ts=await ncm.artist_top_song({ id:q.query.id, cookie:ncmCookie }); let arr=(ts.body&&ts.body.songs)||[]; if(!arr.length){ try{ const a=await ncm.artists({ id:q.query.id, cookie:ncmCookie }); arr=(a.body&&a.body.hotSongs)||[]; }catch(e){} } const songs=arr.map(ncmMapSong); r.json({ ok:true, songs }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/lyric', async (q,r)=>{ try{ const ly=await ncm.lyric({ id:q.query.id, cookie:ncmCookie }); r.json({ ok:true, lyric:(ly.body&&ly.body.lrc&&ly.body.lrc.lyric)||'', tlyric:(ly.body&&ly.body.tlyric&&ly.body.tlyric.lyric)||'' }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/comments', async (q,r)=>{ try{ const cm=await ncm.comment_music({ id:q.query.id, limit:20, offset:0, cookie:ncmCookie }); const b=cm.body||{}; const raw=(b.hotComments&&b.hotComments.length)?b.hotComments:(b.comments||[]); const comments=raw.map(c=>({ u:(c.user&&c.user.nickname)||'网易云用户', av:((c.user&&c.user.avatarUrl)||'').replace(/^http:/,'https:'), t:c.content||'', z:c.likedCount||0, time:c.timeStr||'' })); r.json({ok:true,comments,total:(b.total||0)}); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/record', async (_q,r)=>{ try{ const p=await ncmProfile(); if(!p) return r.json({ok:true,logged:false,songs:[]}); let arr=[]; try{ const rc=await ncm.user_record({ uid:p.userId, type:1, cookie:ncmCookie }); arr=(rc.body&&(rc.body.weekData||rc.body.allData))||[]; }catch(e){} if(!arr.length){ try{ const r0=await ncm.user_record({ uid:p.userId, type:0, cookie:ncmCookie }); arr=(r0.body&&(r0.body.weekData||r0.body.allData))||[]; }catch(e){} } const songs=arr.map(x=>x&&x.song).filter(Boolean).map(ncmMapSong); r.json({ ok:true, logged:true, songs }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/toplist', async (q,r)=>{ try{ if(q.query.id){ const tr=await ncm.playlist_track_all({ id:q.query.id, limit:300, cookie:ncmCookie }); const songs=((tr.body&&tr.body.songs)||[]).map(ncmMapSong); return r.json({ ok:true, songs }); } const t=await ncm.toplist({ cookie:ncmCookie }); const lists=((t.body&&t.body.list)||[]).map(x=>({ id:x.id, name:x.name, cover:x.coverImgUrl||x.coverImageUrl||'', updateFrequency:x.updateFrequency||'' })); r.json({ ok:true, lists }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
-app.get('/api/ncm/playlist-add', async (q,r)=>{ try{ await ncm.playlist_tracks({ op:'add', pid:q.query.pid, tracks:q.query.id, cookie:ncmCookie }); r.json({ ok:true }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
-app.get('/api/ncm/playlist-del', async (q,r)=>{ try{ await ncm.playlist_tracks({ op:'del', pid:q.query.pid, tracks:q.query.id, cookie:ncmCookie }); r.json({ ok:true }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
-app.get('/api/ncm/like', async (q,r)=>{ try{ await ncm.like({ id:q.query.id, like:(q.query.like==='1'||q.query.like==='true'), cookie:ncmCookie }); r.json({ ok:true }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
+app.post('/api/ncm/playlist-add', async (q,r)=>{ try{ await ncm.playlist_tracks({ op:'add', pid:q.query.pid, tracks:q.query.id, cookie:ncmCookie }); r.json({ ok:true }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
+app.post('/api/ncm/playlist-del', async (q,r)=>{ try{ await ncm.playlist_tracks({ op:'del', pid:q.query.pid, tracks:q.query.id, cookie:ncmCookie }); r.json({ ok:true }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
+app.post('/api/ncm/like', async (q,r)=>{ try{ await ncm.like({ id:q.query.id, like:(q.query.like==='1'||q.query.like==='true'), cookie:ncmCookie }); r.json({ ok:true }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/likelist', async (_q,r)=>{ try{ const p=await ncmProfile(); if(!p) return r.json({ok:true,logged:false,ids:[]}); const ll=await ncm.likelist({ uid:p.userId, cookie:ncmCookie }); r.json({ ok:true, ids:(ll.body&&ll.body.ids)||[] }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 // —— Room timeline persistence: append-only JSONL, zero deps ——
 function appendEvent(ev){ try { db.prepare('INSERT INTO room_events(room,msg,ts) VALUES(?,?,?)').run(String(ev.room||'main'), JSON.stringify(ev.msg||{}), ev.ts||Date.now()); } catch(e){} }
@@ -320,6 +341,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 const rooms = new Map();
 wss.on('connection', (sock, req) => {
+  try { const a = readAuth(); if (a) { const u = new URL(req.url, 'http://x'); const t = u.searchParams.get('token') || ''; if (t !== makeToken(a.secret)) { sock.close(4401, 'unauthorized'); return; } } } catch(e){}
   let room = 'main';
   try { room = new URL(req.url, 'http://x').searchParams.get('room') || 'main'; } catch (e) {}
   if (!rooms.has(room)) rooms.set(room, new Set());
