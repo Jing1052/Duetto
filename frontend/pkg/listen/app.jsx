@@ -97,12 +97,11 @@ function LSApp() {
     fetch(base + '/ncm/song-url?id=' + s.id).then(r => r.json()).then(d => { if (d && d.url) { lsAudioEl.src = d.url; lsAudioEl.play().catch(function(){}); logListen(s, d.url); } else { logListen(s, ''); } }).catch(function(){ logListen(s, ''); });
     fetch(base + '/ncm/lyric?id=' + s.id).then(r => r.json()).then(l => { window.__lsTLyric = (l && l.tlyric) || ''; setNcmLyric((l && l.lyric) || ''); }).catch(function(){});
   };
-  // 快放完时预取下一首的播放地址（顺序模式），ended 后台切歌不再依赖临时 fetch
+  // 开播即预取下一首的播放地址：不等尾窗（歌尾可能已在 iOS 后台、fetch 会被掐），前台就把地址备好，ended 零网络切歌
   aUseEffect(() => {
     if (!ncmQueue || !ncmQueue.list || ncmQueue.list.length < 2 || playMode === 'one') return;
     const curSong = ncmQueue.list[ncmQueue.idx];
-    const d = (curSong && curSong.dur) || Math.floor(lsAudioEl.duration || 0);
-    if (!d || cur < d - 25) return;
+    if (cur < 2) return;
     const pf0 = window.__lsPrefetch;
     if (pf0 && pf0.forCur === String((curSong && curSong.id) || '')) return;
     let ni = (ncmQueue.idx + 1) % ncmQueue.list.length;
@@ -198,7 +197,18 @@ function LSApp() {
         if (act.query) {
           fetch(base + '/ncm/search?kw=' + encodeURIComponent(act.query))
             .then(function(r){ return r.json(); })
-            .then(function(d){ var s = d && d.songs && d.songs[0]; if (s && window.__lsRoomShare) window.__lsRoomShare('ai', s); }).catch(function(){});
+            .then(function(d){
+              var s = d && d.songs && d.songs[0]; if (!s) return;
+              if (window.__lsRoomShare) window.__lsRoomShare('ai', s);
+              // 推出分享卡的同时：加入播放列表（不清空队列）并切过去播
+              setNcmQueue(function (q) {
+                var list = (q && q.list) ? q.list.slice() : [];
+                var i = list.findIndex(function (x) { return String(x.id) === String(s.id); });
+                if (i < 0) { list.push(s); i = list.length - 1; }
+                setNcmSong(list[i]); setCur(0); setPlaying(true); loadNcm(list[i]);
+                return { list: list, idx: i };
+              });
+            }).catch(function(){});
         } else if (window.__lsRoomShare) window.__lsRoomShare('ai');
       }
     } catch (e) {}
