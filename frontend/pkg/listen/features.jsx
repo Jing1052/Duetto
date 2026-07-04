@@ -161,7 +161,8 @@ function LSSongDrawer({ song: songProp, ncmSong, ncmId, loved, onToggleLove, inL
 
 // ════════ C. 听歌档案 ════════
 function LSArchiveView({ onOpenSong }) {
-  const list = window.__lsStore.archive || [];
+  // 过滤早期演示占位（s1-s4 假歌的种子记录），只显示真实的问Ta记录
+  const list = (window.__lsStore.archive || []).filter(function (a) { return !/^s\d$/.test(String((a && a.songId) || '')); });
   const f = list;
   // 真实听歌档案：服务端聚合（总量 / 时段偏好 / 常听排行 + 每首的听后印象）
   const [stats, setStats] = fUseState(null);
