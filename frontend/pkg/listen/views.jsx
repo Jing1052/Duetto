@@ -903,11 +903,13 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
     const msgs = [];
     if (title && title !== s.title) msgs.push(who + ' 播放了《' + title + '》' + (npArtist ? ' ' + npArtist : ''));
     else {
-      if (isPlaying !== s.playing) msgs.push(who + (isPlaying ? ' 继续播放' : ' 暂停了') + (title ? ' 《' + title + '》' : ''));
+      const sysE = window.__lsSysEvt && (Date.now() - window.__lsSysEvt) < 3000;
+      if (isPlaying !== s.playing && !sysE) msgs.push(who + (isPlaying ? ' 继续播放' : ' 暂停了') + (title ? ' 《' + title + '》' : ''));
       if (pm !== s.mode) msgs.push(who + ' 切换到' + (pm === 'one' ? '单曲循环' : pm === 'shuffle' ? '随机播放' : '列表循环'));
     }
     s.title = title; s.playing = isPlaying; s.mode = pm;
-    if (msgs.length) { const sysMsgs = msgs.map(t => ({ who: 'sys', t: t, time: lsNow(), sys: true })); setChat(c => [...c, ...sysMsgs]); sysMsgs.forEach(bcast); }
+    const fresh = msgs.filter(t => !(s.lastSys && s.lastSys.t === t && (Date.now() - s.lastSys.ts) < 30000));
+    if (fresh.length) { s.lastSys = { t: fresh[fresh.length - 1], ts: Date.now() }; const sysMsgs = fresh.map(t => ({ who: 'sys', t: t, time: lsNow(), sys: true })); setChat(c => [...c, ...sysMsgs]); sysMsgs.forEach(bcast); }
   }, [song && song.title, isPlaying, playMode]);
 
   // 新消息滚到底

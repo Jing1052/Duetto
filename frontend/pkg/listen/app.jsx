@@ -208,10 +208,10 @@ function LSApp() {
     var onP = function(){
       // React 认为在播、audio 却停了 = 系统中断（iOS 锁屏/来电/其它 app 抢占）：本地跟随，但标记来源，广播时跳过
       if (!window.__lsPlaying) return;
-      window.__lsSysPause = Date.now();
+      window.__lsSysPause = Date.now(); window.__lsSysEvt = Date.now();
       setPlaying(false);
     };
-    var onPl = function(){ if (!window.__lsPlaying) setPlaying(true); };
+    var onPl = function(){ if (!window.__lsPlaying) { window.__lsSysEvt = Date.now(); setPlaying(true); } };
     var onErr = function(){
       // 播放地址失效（网易云 URL 过期）：重取当前歌地址、回到原进度续播
       try {
@@ -225,7 +225,7 @@ function LSApp() {
         }).catch(function(){});
       } catch(er){}
     };
-    var onVis = function(){ if (document.visibilityState === 'visible' && window.__lsPlaying && lsAudioEl.paused) lsAudioEl.play().catch(function(){}); };
+    var onVis = function(){ if (document.visibilityState === 'visible' && window.__lsPlaying && lsAudioEl.paused) { window.__lsSysEvt = Date.now(); lsAudioEl.play().catch(function(){}); } };
     lsAudioEl.addEventListener('timeupdate', onT); lsAudioEl.addEventListener('ended', onE);
     lsAudioEl.addEventListener('pause', onP); lsAudioEl.addEventListener('playing', onPl); lsAudioEl.addEventListener('error', onErr); lsAudioEl.addEventListener('stalled', onErr);
     document.addEventListener('visibilitychange', onVis);
