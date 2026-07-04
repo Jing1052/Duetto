@@ -352,7 +352,7 @@ function LSPlayerView({ idx, setIdx, playing, setPlaying, cur, setCur, loved, se
         )}
 
         {/* 歌手主页抽屉 */}
-        {artistSheet && (
+        {artistSheet && ReactDOM.createPortal((
           <div className="ls-sheet-mask" onClick={() => setArtistSheet(null)}>
             <div className="ls-artist-sheet" onClick={e => e.stopPropagation()}>
               <div className="ah">
@@ -376,7 +376,7 @@ function LSPlayerView({ idx, setIdx, playing, setPlaying, cur, setCur, loved, se
               </div>
             </div>
           </div>
-        )}
+        ), document.body)}
 
         {/* 页指示点 */}
         <div className="ls-pane-dots">
