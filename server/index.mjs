@@ -14,7 +14,16 @@ const dataDir = process.env.DUETTO_DATA_DIR || path.join(rootDir, 'data');
 const settingsFile = path.join(dataDir, 'settings.json');
 const PORT = Number(process.env.PORT || 4183);
 const DEFAULTS = { user_name:'You', ai_name:'DJ', room_name:'Our Room', room_sub:'', ai:{base_url:'',api_key:'',model:'',persona:''}, show_gallery:true, avatar_url:'', ai_avatar_url:'', background_url:'', theme:'' };
-function getSettings(){ try{ const r=JSON.parse(fs.readFileSync(settingsFile,'utf8')); return {...DEFAULTS,...r,ai:{...DEFAULTS.ai,...(r.ai||{})}}; }catch(e){ return {...DEFAULTS}; } }
+// AI config may come from env (e.g. Zeabur secrets) so keys never sit in a
+// committed file. Precedence: settings.json (UI edits) > env > DEFAULTS.
+function envAi(){ const e=process.env; const o={}; const put=(k,v)=>{ if(v!==undefined&&v!=='') o[k]=v; };
+  put('base_url', e.DUETTO_AI_BASE_URL); put('api_key', e.DUETTO_AI_KEY); put('model', e.DUETTO_AI_MODEL);
+  put('a_base', e.DUETTO_AI_A_BASE); put('a_key', e.DUETTO_AI_A_KEY); put('a_model', e.DUETTO_AI_A_MODEL);
+  put('context_url', e.DUETTO_AI_CONTEXT_URL); put('persona', e.DUETTO_AI_PERSONA); put('style', e.DUETTO_AI_STYLE);
+  return o; }
+function nonEmptyObj(o){ const out={}; for(const k in o){ if(o[k]!==undefined&&o[k]!=='') out[k]=o[k]; } return out; }
+function getSettings(){ let r={}; try{ r=JSON.parse(fs.readFileSync(settingsFile,'utf8')); }catch(e){}
+  return {...DEFAULTS, ...r, ai:{...DEFAULTS.ai, ...envAi(), ...nonEmptyObj(r.ai||{})}}; }
 function redactSettings(s){ const out={...s,ai:{...(s&&s.ai||{})}}; if(out.ai.api_key){ out.ai.has_key=true; out.ai.key_hint='****'+String(out.ai.api_key).slice(-4); out.ai.api_key=''; } else { out.ai.has_key=false; out.ai.key_hint=''; } if(out.ai.a_key){ out.ai.has_a_key=true; out.ai.a_key_hint='****'+String(out.ai.a_key).slice(-4); out.ai.a_key=''; } else { out.ai.has_a_key=false; out.ai.a_key_hint=''; } return out; }
 function writePrivate(file, text){ const tmp=file+'.tmp'; fs.writeFileSync(tmp, text, { mode: 0o600 }); try{ fs.chmodSync(tmp, 0o600); }catch(e){} fs.renameSync(tmp, file); try{ fs.chmodSync(file, 0o600); }catch(e){} }
 // ═══ SQLite：长期档案（听歌流水/房间对话/歌曲分析/在场记录/印象）。JSON 只留瞬时状态（settings/cookie/封面缓存） ═══
