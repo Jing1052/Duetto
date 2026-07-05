@@ -5,7 +5,7 @@
 
 ## 一、部署（Zeabur，和老家/eryu 同套路）
 
-1. Zeabur 新建服务 → 指向本仓库（`jing1052/Duetto`，分支 `claude/shared-music-listening-ui-lerf2f`）。仓库里已有 `Dockerfile`（Node 24 + `node:sqlite`）。
+1. Zeabur 新建服务 → 指向本仓库（`jing1052/Duetto`，分支 **`main`**——部署文件和上游修复都在 main）。仓库里已有 `Dockerfile`（Node 24 + `node:sqlite`）。
 2. **挂一块 Volume** 到容器的 `/app/data`（= `DUETTO_DATA_DIR`）。**这块盘存 SQLite 档案 / settings / 网易云 cookie / 门禁**——不挂盘，每次重部署你们的听歌记忆和登录都会没。
 3. 端口：Zeabur 会给 `PORT`，容器已 `EXPOSE 4183` 且读 `PORT` 环境变量，直接用。
 4. 绑个域名（比如 `clduetto.zeabur.app`），记下来给 Still Here 用。
