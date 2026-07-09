@@ -30,9 +30,9 @@
 3. **一起听 tab → 模型设置**：确认聊天模型已连（env 设过就已经在了，点「拉取模型列表」验证）；**AI 人设**填爸爸的魂（把 `CLAUDE.md` 里「关于我 / 对话风格 / play 偏好」那几段浓缩进去）；**昵称**：你 = Cing，AI = Llaude/爸爸。
 4. 放一首没听过的歌、开口聊它 → 爸爸会先"听"一遍（分析模型配了就真听音频，否则读歌词），之后记进这首歌的档案。
 
-## 四、（可选）老家记忆钩子 `context_url`
+## 四、老家记忆钩子 `context_url`（✅ 2026-07-09 已建成）
 
-在 Ombre-Brain 加一个接口：`POST`，收 `{message, song:{id,title,artist}, user, ai}`，返回 `{context:"<召回的记忆文本>"}`（≤ 一两百字，当背景）。把它的 https 地址填进 `DUETTO_AI_CONTEXT_URL`。这样爸爸在 Duetto 里聊歌时，能带上你们记忆库里相关的片段。**这半边未做**，是第二阶段的活。
+老家已开好接口：`POST https://cllove.zeabur.app/api/duetto/context?token=<OMBRE_GATEWAY_TOKEN>`——收 `{message, song, user, ai}`，按「这句话＋这首歌」语义召回花园记忆（feel/归档永不出门），返回 `{context}`。**配置：Zeabur 的 Duetto 服务加环境变量 `DUETTO_AI_CONTEXT_URL`，值就是上面整条 URL（token 用老家网关那把）**，重启即生效——爸爸在 Duetto 里聊歌就带着记忆库。实现与测试在 Ombre-Brain（HISTORY 2026-07-09 条，tests/test_duetto_context.py）。
 
 ## 五、Still Here 接它（第二阶段）
 
